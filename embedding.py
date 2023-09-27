@@ -40,15 +40,15 @@ def decode_images(centroid_list, model, device):
 
 def setup_opts():
     opt = Options()
-    
+
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    
+
     #set batch_size to 1 and reload dataset
     #must be 1 or extra data will be ignored later
     opt.batch_size = 1
     transform_mode = "clip_mode" if opt.use_clip else "resize only"
     datas = dl.DataLoader(opt, transform_mode = transform_mode, return_path = True)
-    
+
     # following loop generates the encodings, simply passing data through
     # the encoder and condensing, see encode_image function
     encodings = {}
@@ -57,33 +57,38 @@ def setup_opts():
 def encode(use_clip, use_clip_labels, model, datas, encodings, opt, device):
     start_encode = time.time()
     print("Generating Encodings")
-    
+
     if use_clip and use_clip_labels:
         # load text before the loop
         text = clip.tokenize(opt.clip_categories).to(device)
         print(f"Finding categories {opt.clip_categories} using CLIP")
-    
+
     with torch.no_grad():
         # sleeping for tqdm
         time.sleep(0.2)
         pbar = tqdm(total = len(datas))
         for data, path in datas:
-            
+
             pbar.update(1)
-            
+
             data = data.to(device)
-    
+
             if use_clip and use_clip_labels:
                 logits_per_image, logits_per_text = model(data, text)
                 probs = logits_per_image.softmax(dim=-1)[0].cpu().numpy()
-                
+                encoding = model.encode_image(data)
+                tokens = clip.tokenize(['hello cat can be used for.'], context_length=77).cuda()
+                en_text = model.encode_text(tokens)
+                import pdb
+                pdb.set_trace()
+
                 encodings[path] = probs
             else:
                 encoding = model.encode_image(data)[0].cpu().numpy()
                 encodings[path] = encoding
-            
+
         pbar.close()
-    
+
     # dictionary of encodings being converted to pandas dict
     encodings = pd.DataFrame(data = encodings).T.reset_index()
     if use_clip_labels:
@@ -97,14 +102,14 @@ def encode(use_clip, use_clip_labels, model, datas, encodings, opt, device):
 def generate_embeddings():
     """
     Function to generate the embeddings of files. Uses a trained autoencoder
-    to first encode the image, then a dimensionality reduction algorithim is 
+    to first encode the image, then a dimensionality reduction algorithim is
     run on each encoded image to embed it in 3D space.
     Additionally, clusters are generated with k-means clustering for better
     visualizing the data.
     Output data is saved as a datafile for later plotting, as well as returned
     in a Dataset object.
     """
-    
+
     opt, device, datas, encodings = setup_opts()
 
     # special args get their own variables
@@ -118,24 +123,25 @@ def generate_embeddings():
     fix_labels = opt.fix_labels
 
     if use_clip:
-        model, preprocess = clip.load("ViT-B/32", device=device)
+        # ['RN50', 'RN101', 'RN50x4', 'RN50x16', 'RN50x64', 'ViT-B/32', 'ViT-B/16', 'ViT-L/14', 'ViT-L/14@336px']
+        # model, preprocess = clip.load("ViT-B/32", device=device)
+        model, preprocess = clip.load("ViT-L/14", device=device)
     else:
         model = load_model(retrain, opt, device)
-
     #disabling training mode (eg removes dropout)
     model.train(mode=False)
     os.makedirs("data", exist_ok = True)
-    
+
     if reencode or not os.path.exists("data/encodings.csv"):
         encodings = encode(use_clip, use_clip_labels, model, datas, encodings, opt, device)
     else:
         print("Loading encodings...")
         encodings = pd.read_csv("data/encodings.csv")
-        
-    print("Encodings retrieved")    
+
+    print("Encodings retrieved")
     # but we still need them as numpy array for sklearn functions
     encodings_np = encodings.drop("path", axis = 1).to_numpy()
-    
+
     encodings_np = robust_scale(encodings_np)
 
     label_images = None
@@ -144,7 +150,7 @@ def generate_embeddings():
         encodings["labels"] = encodings[opt.clip_categories].idxmax(axis = 1)
         if fix_labels:
             # renaming labels using CLIP categories for clarity
-            encodings = relabel(encodings, opt.clip_categories)  
+            encodings = relabel(encodings, opt.clip_categories)
 
     else:
         if opt.use_hc:
@@ -160,7 +166,7 @@ def generate_embeddings():
                 if not quick:
                     label_images = decode_images(centroids, model, device)
         encodings["labels"] = labels
-    
+
     if regenerate_embedding or (not os.path.exists("data/embeddings.csv")):
         # embedding the encoding vectors, note n_components must be 3 for 3D
         start_embed = time.time()
@@ -184,28 +190,28 @@ def generate_embeddings():
 
 def get_best_kmeans(np_data, k_max = 25, k_min = 2):
     """
-    Function to find the best cluster size, based on silhouette score, for 
+    Function to find the best cluster size, based on silhouette score, for
     data in a numpy array
     ----------
     np_data: numpy array to cluster on
     k_max: default 25, max number of cluseters to test to
     k_min: default 2, cluster size to start testing at
     """
-    
+
     k_dict = {}
     model_dict = {}
     print(f"\tEstimating best k for clustering\n\t\tRange of k: ({k_min}, {k_max})")
     for ks in range(k_min, k_max + 1):
         print(ks)
         kmeans = KMeans(n_clusters = ks).fit(np_data)
-        labels = kmeans.labels_    
-        
+        labels = kmeans.labels_
+
         model_dict[ks] = kmeans
         k_dict[ks] = silhouette_score(np_data, labels)
     best_k = max(k_dict, key = k_dict.get)
     print(f"\t\tBest k-estimated to be {best_k}, with silhouette score of {k_dict[best_k]}")
     return model_dict[best_k]
- 
+
 def relabel(data, label_cols, labels_col = "labels"):
     """
     Sets label for generic k-means group label to the closest in the CLIP labels.
@@ -218,7 +224,7 @@ def relabel(data, label_cols, labels_col = "labels"):
         label_pairs[label] = new_label
     data[labels_col] = data[labels_col].replace(label_pairs)
     return data
-        
+
 def manifold_function(data, opt):
     """Wrapper for manifold embedding functions, to allow for easy switching between them
     with a string input"""
@@ -236,7 +242,7 @@ def manifold_function(data, opt):
     else:
         raise ValueError(f"Embedding method {method} not valid. Valid methods are: lle, mds, isomap, t-sne, pca")
     return embeds
-    
+
 if __name__ == "__main__":
     generate_embeddings()
-    
+

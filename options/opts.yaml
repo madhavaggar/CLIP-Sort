@@ -1,8 +1,8 @@
 # GENERAL ARGS
-filepath: /home/ma952/notebooks/Data/hoyfield3rdFloor1/primary_aligned/
+filepath: /home/youming/Desktop/controlnet_playground/test_imgs/dog
 # MODEL ARGS
 visual_aa_args :
-    in_size : [256, 256]
+    in_size : [563, 501]
     in_channels : 3
     dropout_val : 0.2
 # TRAIN ARGS
@@ -38,4 +38,4 @@ n_clusters : 5
 quick : True # this only works for VAE and involves generating cluster images from latent space cluster centroids
 
 # OUTPUT ARGS
-out_filepath: /home/ma952/notebooks/Data/hoyfield3rdFloor1/sorted/
+out_filepath: /home/youming/Desktop/controlnet_playground/test_imgs/dog
